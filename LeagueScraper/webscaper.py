@@ -1,48 +1,87 @@
 import requests
 from bs4 import BeautifulSoup
 
-# URL of the LoL patch notes page
-url = 'https://www.leagueoflegends.com/en-us/news/game-updates/patch-14-1-notes/'
 
-# Send a GET request to the website
-response = requests.get(url)
+class PatchNotesScraper:
+    def __init__(self, url):
+        self.url = url
+        self.soup = None
+        self.patch_data = {}
 
-# Parse the HTML content of the page with BeautifulSoup
-soup = BeautifulSoup(response.text, 'html.parser')
+    def fetch_page(self):
+        """Fetch the HTML content of the webpage."""
+        try:
+            response = requests.get(self.url, timeout=10)
+            response.raise_for_status()
+            self.soup = BeautifulSoup(response.content, 'html.parser')
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching the URL: {e}")
+            self.soup = None
 
-# Find all the h4 tags with class 'change-detail-title'
-change_categories = soup.find_all('h4', class_='change-detail-title')
+    def parse_patch_notes(self):
+        """Parse the patch notes from the HTML content."""
+        if not self.soup:
+            return
 
-# Initialize a dictionary to hold the data
-patch_data = {}
+        # Locate the container for patch notes
+        patch_notes_container = self.soup.find('div', id='patch-notes-container')
+        if not patch_notes_container:
+            print("Error: Patch notes container not found.")
+            return
 
-# Loop through each change category and extract the relevant data
-for category in change_categories:
-    # The category name is the text of the h4 tag
-    category_name = category.get_text().strip()
+        # Find all categories (h4 elements)
+        categories = patch_notes_container.find_all('h4', class_='change-detail-title')
 
-    # Skip sections you don't need (e.g., "Bugfixes")
-    if category_name.lower() == 'bugfixes':
-        break  # This will exit the loop and ignore all sections after "Bugfixes"
+        for category in categories:
+            category_name = category.get_text(strip=True)
+            if category_name not in self.patch_data:
+                self.patch_data[category_name] = []
 
-    patch_data[category_name] = []
+            # Stop processing after "Item Nerfs"
+            if category_name == "Item Nerfs":
+                self.patch_data[category_name] = self.parse_category_items(category)
+                break
 
-    # The first strong tag after the h4 tag contains the subject of the change
-    next_element = category.find_next()
-    while next_element and next_element.name != 'h4':
-        if next_element.name == 'strong':
-            subject_name = next_element.get_text().strip()
-            details_list = next_element.find_next('ul')
-            details = [detail.get_text().strip() for detail in details_list.find_all('li')] if details_list else []
-            patch_data[category_name].append({'subject': subject_name, 'details': details})
-        next_element = next_element.find_next()
+            # Parse other categories normally
+            self.patch_data[category_name] = self.parse_category_items(category)
 
-# Print the extracted data
-for category, subjects in patch_data.items():
-    print(f"{category}:")
-    for subject in subjects:
-        print(f" - Subject: {subject['subject']}")
-        for detail in subject['details']:
-            print(f"   Detail: {detail}")
-        print("\n")
-    print("\n")
+    def parse_category_items(self, category):
+        """Parse items and details for a given category."""
+        items = []
+        next_element = category.find_next_sibling()
+        while next_element:
+            if next_element.name == 'strong':  # Subject header
+                subject_name = next_element.get_text(strip=True)
+                details_list = next_element.find_next('ul')  # Find the following <ul> for details
+                details = (
+                    [detail.get_text(strip=True) for detail in details_list.find_all('li')]
+                    if details_list
+                    else []
+                )
+                # Skip empty or malformed data
+                if subject_name and details:
+                    description = " ".join(details)
+                    items.append({'item': subject_name, 'description': description})
+            next_element = next_element.find_next_sibling()  # Move to the next sibling
+        return items
+
+    def display_patch_notes(self):
+        """Display the parsed patch notes."""
+        if not self.patch_data:
+            print("No patch notes available.")
+            return
+
+        for category, items in self.patch_data.items():
+            print(f"{category}:")
+            for item in items:
+                print(f"{item['item']}: ({item['description']})")
+            print("\n")
+
+
+# Usage
+if __name__ == "__main__":
+    url = 'https://www.leagueoflegends.com/en-us/news/game-updates/patch-14-1-notes/'
+    scraper = PatchNotesScraper(url)
+    scraper.fetch_page()
+    scraper.parse_patch_notes()
+    scraper.display_patch_notes()
